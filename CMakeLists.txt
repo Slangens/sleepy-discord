@@ -7,8 +7,8 @@ option(USE_CPR                       "Use CPR http library"                     
 option(USE_WEBSOCKETPP               "Use websocketpp websockets library"                   ON )
 option(USE_UWEBSOCKETS               "Use uWebsockets websockets library"                   OFF)
 option(USE_ASIO                      "Use ASIO network and I/O library (Used for UDP)"      OFF)
-option(USE_LIBOPUS                   "Use Opus audio codec library"                         OFF)
-option(USE_LIBSODIUM                 "Use libsodium cryptography library"                   OFF)
+option(USE_LIBOPUS                   "Use Opus audio codec library"                         ON)
+option(USE_LIBSODIUM                 "Use libsodium cryptography library"                   ON)
 
 #set variables based on other variables
 if(BUILD_EXAMPLES)
