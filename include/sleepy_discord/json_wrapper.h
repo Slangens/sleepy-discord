@@ -2,6 +2,8 @@
 #include <list>
 #include <utility>
 #include <vector>
+//for errrors
+#include <iostream>
 
 #define RAPIDJSON_NO_SIZETYPEDEFINE
 typedef std::size_t SizeType;
@@ -25,7 +27,7 @@ namespace SleepyDiscord {
 		//Value getValue(const char* source, const char * name);
 
 		const std::string createJSON(std::initializer_list<std::pair<std::string, std::string>> json);
-		const std::string string(const std::string s);
+		const std::string string(const std::string& s);
 		const std::string UInteger(const uint64_t num);
 		const std::string optionalUInteger(const uint64_t num);
 		const std::string integer(const int64_t num);
@@ -45,15 +47,11 @@ namespace SleepyDiscord {
 			return target;
 		}
 
-		struct BaseArrayWrapper {
-			virtual Array getArray() = 0;
-		};
-
-		struct ArrayStringWrapper : public BaseArrayWrapper {
+		struct ArrayStringWrapper {
 			const Value& json;
 			ArrayStringWrapper(const Value& json) : json(json) {}
-			operator const Value&() const { return json; }
-			inline Array getArray() override { return json.GetArray(); }
+			inline const Value& getDoc() const { return json; }
+			operator const Value&() const { return getDoc(); }
 		};
 
 		template<class TypeToConvertTo, class Base = ArrayStringWrapper>
@@ -61,12 +59,13 @@ namespace SleepyDiscord {
 			using Base::Base;
 			template<template<class...> class Container, typename Type = TypeToConvertTo>
 			Container<Type> get() {
-				Array jsonArray = Base::getArray();
+				auto&& doc = Base::getDoc();
+				Array jsonArray = doc.template Get<Array>();
 				return Container<Type>(jsonArray.begin(), jsonArray.end());
 			}
 
 			inline std::vector<TypeToConvertTo> vector() { return get<std::vector>(); }
-			inline std::list  <TypeToConvertTo> list()   { return get<std::list>();   }
+			inline std::list  <TypeToConvertTo> list  () { return get<std::list>();   }
 
 			//c arrays
 			inline TypeToConvertTo* cArray() { return &vector()[0]; }
@@ -167,7 +166,7 @@ namespace SleepyDiscord {
 			static inline std::string toType(const Value& value) {
 				return toStdString(value);
 			}
-			static inline Value fromType(const std::string& value, Value::AllocatorType& allocator) {
+			static inline Value fromType(const std::string& value, Value::AllocatorType&) {
 				return Value(value.c_str(), value.length());
 			}
 		};
@@ -177,7 +176,7 @@ namespace SleepyDiscord {
 			static inline nonstd::string_view toType(const Value& value) {
 				return toStdStringView(value);
 			}
-			static inline Value fromType(const nonstd::string_view& value, Value::AllocatorType& allocator) {
+			static inline Value fromType(const nonstd::string_view& value, Value::AllocatorType&) {
 				return Value(value.data(), value.length());
 			}
 		};
@@ -190,10 +189,14 @@ namespace SleepyDiscord {
 			static inline bool empty(const PrimitiveType& value) {
 				return value == static_cast<PrimitiveType>(defaultValue);
 			}
-			static inline Value fromType(const PrimitiveType& value, Value::AllocatorType& allocator) {
+			static inline Value fromType(const PrimitiveType& value, Value::AllocatorType& /*allocator*/) {
 				return Value(value);
 			}
 		};
+
+		//for some reason, some compilers need this
+		//template <int defaultValue>
+		//struct PrimitiveTypeHelper<long int, defaultValue> : public PrimitiveTypeHelper<long long, defaultValue> {};
 
 		template<> struct ClassTypeHelper<int     > : public PrimitiveTypeHelper<int     > {};
 		template<> struct ClassTypeHelper<uint32_t> : public PrimitiveTypeHelper<uint32_t> {};
@@ -217,16 +220,38 @@ namespace SleepyDiscord {
 		};
 
 		template<class Container, template<class...> class TypeHelper>
-		struct ContainerTypeHelper : public EmptyFunction<Container> {
-			static inline Container toType(const Value& value) {
-				return toArray<typename Container::value_type>(value);
-			}
+		struct FromContainerFunction {
 			static inline Value fromType(const Container& values, Value::AllocatorType& allocator) {
 				Value arr(rapidjson::kArrayType);
 				arr.Reserve(values.size(), allocator);
 				for (const typename Container::value_type& value : values)
 					arr.PushBack(TypeHelper<typename Container::value_type>::fromType(value, allocator), allocator);
 				return arr;
+			} 
+		};
+
+		template<class Container, template<class...> class TypeHelper>
+		struct ContainerTypeHelper : public EmptyFunction<Container>, public FromContainerFunction<Container, TypeHelper> {
+			static inline Container toType(const Value& value) {
+				return toArray<typename Container::value_type>(value);
+			}
+		};
+
+		template<class StdArray, template<class...> class TypeHelper>
+		struct StdArrayTypeHelper : public EmptyFunction<StdArray>, public FromContainerFunction<StdArray, TypeHelper> {
+			static inline StdArray toType(const Value& value) {
+				ArrayWrapper<typename StdArray::value_type> arrayWrapper(value);
+				std::array<typename StdArray::value_type, std::tuple_size<StdArray>::value> arr;
+				Array jsonArray = arrayWrapper.getDoc().template Get<Array>();
+				Value::ConstValueIterator iterator = jsonArray.Begin();
+				for (typename StdArray::value_type& v : arr) {
+					if (iterator == jsonArray.End())
+						break;
+					v = TypeHelper<typename StdArray::value_type>::toType(*iterator);
+					++iterator;
+				}
+				return arr;
+				//return toArray<typename StdArray::value_type, std::tuple_size<StdArray>::value>(value);
 			}
 		};
 
@@ -261,7 +286,7 @@ namespace SleepyDiscord {
 			return PairImpl<Class, Type, TypeHelper<Type, TypeHelper2>>{member, name, type};
 		}
 
-		//There needs to be a workaround for Visual C++ for this to compile. However, this workaround relys on c++14.
+		//There needs to be a workaround for Visual C++ and clang for this to compile. However, this workaround relys on c++14.
 #if __cpp_return_type_deduction
 #define JSONStruct getJSONStructure()
 #define JSONStructStart constexpr static auto JSONStruct { return
@@ -274,7 +299,7 @@ namespace SleepyDiscord {
 
 		template<class ResultingObject, size_t i = 0>
 		inline typename std::enable_if<i == std::tuple_size<decltype(ResultingObject::JSONStruct)>::value, void>::type
-			fromJSON(ResultingObject& object, const Value& value) {
+			fromJSON(ResultingObject&, const Value&) {
 		}
 
 		template<class ResultingObject, size_t i = 0>
@@ -283,12 +308,16 @@ namespace SleepyDiscord {
 		{
 			constexpr auto field = std::get<i>(ResultingObject::JSONStruct);
 			using Helper = typename decltype(field)::Helper;
-			if (field.type & OPTIONAL_NULLABLE_FIELD) {
-				Value::ConstMemberIterator iterator = value.FindMember(field.name);
-				if (iterator != value.MemberEnd() && !iterator->value.IsNull())
+			Value::ConstMemberIterator iterator = value.FindMember(field.name);
+			if (iterator != value.MemberEnd()) {
+				if (!iterator->value.IsNull()) //ignore if null
 					object.*(field.member) = Helper::toType(iterator->value);
-			} else {
-				object.*(field.member) = Helper::toType(value[field.name]);
+			} else if (field.type == REQUIRIED_FIELD) {
+				//error
+				std::cout << 
+				"JSON Parse Error: "
+				"variable #" << i << ": \"" << field.name << "\" not found. "
+				"Please look at call stack from your debugger for more details.";
 			}
 			fromJSON<ResultingObject, i + 1>(object, value);
 		}
@@ -315,7 +344,7 @@ namespace SleepyDiscord {
 
 		template<class SourceObject, size_t i = 0>
 		inline typename std::enable_if<i == std::tuple_size<decltype(SourceObject::JSONStruct)>::value, void>::type
-			toJSON(const SourceObject& object, Value& value, Value::AllocatorType& allocator) {
+			toJSON(const SourceObject& /*object*/, Value& /*value*/, Value::AllocatorType& /*allocator*/) {
 		}
 
 		template<class SourceObject, size_t i = 0>
@@ -342,11 +371,25 @@ namespace SleepyDiscord {
 			return obj;
 		}
 
+		template<class Object>
+		inline rapidjson::Document toJSON(const Object& object) {
+			rapidjson::Document doc;
+			doc.SetObject();
+			toJSON(object, doc, doc.GetAllocator());
+			return doc;
+		}
+
 		inline std::string stringify(const Value& value) {
 			rapidjson::StringBuffer buffer;
 			rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
 			value.Accept(writer);
 			return std::string(buffer.GetString(), buffer.GetSize());
+		}
+
+		template<class Object>
+		inline std::string stringifyObj(const Object& object) {
+			rapidjson::MemoryPoolAllocator<> allocator;
+			return stringify(toJSON(object, allocator));
 		}
 	}
 }

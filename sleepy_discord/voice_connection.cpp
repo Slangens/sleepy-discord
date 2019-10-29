@@ -5,10 +5,9 @@
 
 namespace SleepyDiscord {
 	VoiceConnection::VoiceConnection(BaseDiscordClient* client, VoiceContext& _context) :
-		origin(client), context(_context), UDP(), sSRC(0), port(0), previousTime(0),
-		nextTime(0),
+		origin(client), context(_context), UDP(*origin), sSRC(0), port(0), nextTime(0),
 #if !defined(NONEXISTENT_OPUS)
-		encoder(nullptr),
+		encoder(nullptr), decoder(nullptr),
 #endif
 		secretKey()
 	{}
@@ -36,6 +35,18 @@ namespace SleepyDiscord {
 			origin->disconnect(1000, "", connection);
 		if (heart.isValid())
 			heart.stop(); //Kill
+		speechTimer.stop();
+		listenTimer.stop();
+		//deal with raw pointers
+		//Sorry about this c code, we are dealing with c libraries
+		if (encoder != nullptr) {
+			opus_encoder_destroy(encoder);
+			encoder = nullptr;
+		}
+		if (decoder != nullptr) {
+			opus_decoder_destroy(decoder);
+			decoder = nullptr;
+		}
 		state = static_cast<State>(state & ~State::CONNECTED);
 	}
 
@@ -100,12 +111,14 @@ namespace SleepyDiscord {
 		case READY: {
 			//json::Values values = json::getValues(d->c_str(),
 			//{ "ssrc", "port" });
-			sSRC = values["ssrc"].GetUint();
-			port = static_cast<uint16_t>(values["port"].GetUint());
+			sSRC = d["ssrc"].GetUint();
+			port = static_cast<uint16_t>(d["port"].GetUint());
+			const json::Value& ipValue = d["ip"];
+			std::string ip(ipValue.GetString(), ipValue.GetStringLength());
 			//start heartbeating
 			heartbeat();
 			//connect to UDP
-			UDP.connect(context.endpoint, port);
+			UDP.connect(ip, port);
 			//IP Discovery
 			unsigned char packet[70] = { 0 };
 			packet[0] = (sSRC >> 24) & 0xff;
@@ -154,10 +167,14 @@ namespace SleepyDiscord {
 			if (context.eventHandler != nullptr)
 				context.eventHandler->onReady(*this);
 			break;
+		case SPEAKING:
+			if (context.eventHandler != nullptr)
+				context.eventHandler->onSpeaking(*this);
 		case RESUMED:
 			break;
 		case HEARTBEAT_ACK:
-			context.eventHandler->onHeartbeatAck(*this);
+			if (context.eventHandler != nullptr)
+				context.eventHandler->onHeartbeatAck(*this);
 			break;
 		default:
 			break;
@@ -165,6 +182,7 @@ namespace SleepyDiscord {
 	}
 
 	void VoiceConnection::processCloseCode(const int16_t code) {
+		//to do deal with close codes
 		getDiscordClient().removeVoiceConnectionAndContext(*this);
 	}
 
@@ -185,11 +203,20 @@ namespace SleepyDiscord {
 			'}';
 		origin->send(heartbeat, connection);
 
-		context.eventHandler->onHeartbeat(*this);
+		if (context.eventHandler != nullptr)
+			context.eventHandler->onHeartbeat(*this);
 
 		heart = origin->schedule([this]() {
 			this->heartbeat();
 		}, heartbeatInterval);
+	}
+
+	inline void VoiceConnection::scheduleNextTime(AudioTimer& timer, TimedTask code, const time_t interval) {
+		timer.nextTime += interval;
+		time_t delay = timer.nextTime - origin->getEpochTimeMillisecond();
+		delay = 0 < delay ? delay : 0;
+
+		timer.timer = origin->schedule(code, delay);
 	}
 
 	void VoiceConnection::startSpeaking() {
@@ -204,7 +231,7 @@ namespace SleepyDiscord {
 #if defined(NONEXISTENT_OPUS)
 			return;
 #else
-			if (!(state & CAN_ENCODE)) {
+			if (!(state & CAN_ENCODE) || encoder == nullptr) {
 				//init opus
 				int opusError = 0;
 				encoder = opus_encoder_create(
@@ -215,10 +242,6 @@ namespace SleepyDiscord {
 				if (opusError) {//error check
 					return;
 				}
-				//opusError = opus_encoder_ctl(encoder, OPUS_SET_BITRATE(BITRATE));
-				//if (opusError) {
-				//	return;
-				//}
 				state = static_cast<State>(state | State::CAN_ENCODE);
 			}
 #endif
@@ -226,7 +249,7 @@ namespace SleepyDiscord {
 		//say something
 		sendSpeaking(true);
 		state = static_cast<State>(state | State::SENDING_AUDIO);
-		previousTime = nextTime = origin->getEpochTimeMillisecond();
+		speechTimer.nextTime = origin->getEpochTimeMillisecond();
 		speak();
 	}
 
@@ -263,7 +286,7 @@ namespace SleepyDiscord {
 			auto audioVectorSource = &static_cast<BasicAudioSourceForContainers&>(*audioSource);
 			audioVectorSource->speak(*this, details, length);
 		} else {
-			int16_t * audioBuffer = nullptr;
+			AudioSample* audioBuffer = nullptr;
 			audioSource->read(details, audioBuffer, length);
 			speak(audioBuffer, length);
 		}
@@ -280,16 +303,15 @@ namespace SleepyDiscord {
 				AudioTransmissionDetails::bitrate() * AudioTransmissionDetails::channels()
 			)) * 1000.0f
 		);
-		previousTime = nextTime;
-		nextTime += interval;
-		const time_t delay = nextTime - origin->getEpochTimeMillisecond();
 
-		origin->schedule([this]() {
-			this->speak();
-		}, 0 < delay ? delay : 0);
+		scheduleNextTime(speechTimer,
+			[this]() {
+				this->speak();
+			}, interval
+		);
 	}
 
-	void VoiceConnection::speak(int16_t*& audioData, const std::size_t & length)  {
+	void VoiceConnection::speak(AudioSample*& audioData, const std::size_t & length)  {
 		samplesSentLastTime = 0;
 		//This is only called in speak() so already checked that we can still send audio data
 
@@ -309,10 +331,10 @@ namespace SleepyDiscord {
 #else
 			//encode data
 			constexpr opus_int32 encodedAudioMaxLength =
-				AudioTransmissionDetails::proposedLength();
+				static_cast<opus_int32>(AudioTransmissionDetails::proposedLength());
 			unsigned char encodedAudioData[encodedAudioMaxLength]; //11.52 kilobytes
 			opus_int32 encodedAudioLength = opus_encode(
-				encoder, audioData, frameSize,
+				encoder, audioData, static_cast<int>(frameSize),
 				encodedAudioData, encodedAudioMaxLength);
 			//send it
 			uint8_t * encodedAudioDataPointer = encodedAudioData;
@@ -348,8 +370,8 @@ namespace SleepyDiscord {
 			static_cast<uint8_t>((sSRC      >> (8 * 0)) & 0xff),
 		};
 			
-		uint8_t nonce[24];
-		std::memcpy(nonce                , header, sizeof nonce - sizeof header);
+		uint8_t nonce[nonceSize];
+		std::memcpy(nonce                , header, sizeof header);
 		std::memset(nonce + sizeof header,      0, sizeof nonce - sizeof header);
 		
 		const size_t numOfBtyes = sizeof header + length + crypto_secretbox_MACBYTES;
@@ -361,12 +383,72 @@ namespace SleepyDiscord {
 
 		UDP.send(audioDataPacket.data(), audioDataPacket.size());
 		samplesSentLastTime = frameSize << 1;
-		timestamp += frameSize;
+		timestamp += static_cast<uint32_t>(frameSize);
+#else
+	#error Can not use voice without libsodium, libsodium not detected.
+#endif
+	}
+
+	//To do test this
+	void VoiceConnection::startListening() {
+		if (!(state & CAN_DECODE) || decoder == nullptr) {
+			int opusError = 0;
+			decoder = opus_decoder_create(
+				/*Sampling rate(Hz)*/AudioTransmissionDetails::bitrate(),
+				/*Channels*/         AudioTransmissionDetails::channels(),
+				&opusError);
+			if (opusError) {//error check
+				return;
+			}
+		}
+		listen();
+	}
+
+	void VoiceConnection::listen() {
+		UDP.receive([this](const std::vector<uint8_t>& data){
+			processIncomingAudio(data);
+		});
+
+		scheduleNextTime(listenTimer,
+			[this]() {
+				this->listen();
+			},  AudioTransmissionDetails::proposedLengthOfTime()
+		);
+	}
+
+	void VoiceConnection::processIncomingAudio(const std::vector<uint8_t>& data)
+	{
+#if !defined(NONEXISTENT_SODIUM) || !defined(NONEXISTENT_OPUS)
+		//get nonce
+		uint8_t nonce[nonceSize];
+		std::memcpy(nonce, data.data(), sizeof nonce);
+		//decrypt
+		std::vector<uint8_t> decryptedData;
+		const std::size_t decryptedDataSize = data.size() - sizeof nonce;
+		decryptedData.reserve(decryptedDataSize);
+		bool isForged = crypto_secretbox_open_easy(
+			decryptedData.data(),
+			data.data() + sizeof nonce,
+			decryptedDataSize, nonce, secretKey
+		) != 0;
+		if (isForged)
+			return;
+		//decode
+		constexpr opus_int32 frameSize = 
+			static_cast<opus_int32>(AudioTransmissionDetails::proposedLength());
+		BaseAudioOutput::Container decodedAudioData;
+		opus_int32 decodedAudioLength = opus_decode(
+			decoder, decryptedData.data(), static_cast<int>(decryptedData.size()),
+			decodedAudioData.data(), frameSize, 1);
+		if(decodedAudioLength < OPUS_OK || !hasAudioOutput())
+			return;
+		AudioTransmissionDetails details(context, 0);
+		audioOutput->write(decodedAudioData, details);
 #endif
 	}
 }
 #else
 void SleepyDiscord::VoiceConnection::initialize() {}
-void SleepyDiscord::VoiceConnection::processMessage(const std::string &message) {}
-void SleepyDiscord::VoiceConnection::processCloseCode(const int16_t code) {}
+void SleepyDiscord::VoiceConnection::processMessage(const std::string &/*message*/) {}
+void SleepyDiscord::VoiceConnection::processCloseCode(const int16_t /*code*/) {}
 #endif

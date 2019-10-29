@@ -1,11 +1,16 @@
 #include "client.h"
 
+#if _MSC_VER && !__INTEL_COMPILER
+#pragma warning( disable: 4100 ) //warns about unused parameters with names
+#pragma warning( disable: 4458 ) //warns about variables that hide class members
+#endif
+
 namespace SleepyDiscord {
 	void BaseDiscordClient::onReady(Ready readyData) {
 
 	}
 
-	void BaseDiscordClient::onResumed(const json::Value& jsonMessage) {
+	void BaseDiscordClient::onResumed() {
 
 	}
 
@@ -54,7 +59,7 @@ namespace SleepyDiscord {
 
 	}
 
-	void BaseDiscordClient::onMemberChunk(const json::Value& jsonMessage) {
+	void BaseDiscordClient::onMemberChunk(Snowflake<Server> serverID, std::vector<ServerMember> members) {
 
 	}
 
@@ -66,11 +71,11 @@ namespace SleepyDiscord {
 
 	}
 
-	void BaseDiscordClient::onPinMessage(const json::Value& jsonMessage) {
+	void BaseDiscordClient::onPinMessage(Snowflake<Channel> channelID, std::string lastPinTimestamp) {
 
 	}
 
-	void BaseDiscordClient::onPresenceUpdate(const json::Value& jsonMessage) {
+	void BaseDiscordClient::onPresenceUpdate(PresenceUpdate presenseUpdate) {
 
 	}
 
@@ -98,9 +103,8 @@ namespace SleepyDiscord {
 
 	}
 
-	void BaseDiscordClient::onEditMessage(const json::Value& jsonMessage) {
-		//because of the fact that on edited messages it'll contain only a subset of the full message object payload
-		//We need a way to edit a message without editing the whole thing
+	void BaseDiscordClient::onEditMessage(MessageRevisions revisioins) {
+
 	}
 
 	void BaseDiscordClient::onEditVoiceServer(VoiceServerUpdate& voiceServerUpdate) {
@@ -127,7 +131,7 @@ namespace SleepyDiscord {
 
 	}
 
-	void BaseDiscordClient::onDeleteAllReaction(Snowflake<Channel> channelID, Snowflake<Message> messageID) {
+	void BaseDiscordClient::onDeleteAllReaction(Snowflake<Server> serverID, Snowflake<Channel> channelID, Snowflake<Message> messageID) {
 
 	}
 
@@ -196,5 +200,9 @@ namespace SleepyDiscord {
 	
 	void BaseDiscordClient::onError(ErrorCode errorCode, std::string errorMessage) {
 		
+	}
+
+	Timer BaseDiscordClient::schedule(TimedTask code, const time_t millisecondsTilDueTime) {
+		return Timer([]() {});
 	}
 }

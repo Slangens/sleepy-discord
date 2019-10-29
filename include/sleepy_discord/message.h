@@ -68,7 +68,7 @@ namespace SleepyDiscord {
 	struct Message : public IdentifiableDiscordObject<Message> {
 	public:
 		Message() = default;
-		~Message();
+		~Message() = default;
 		//Message(const json::Values values);
 		//Message(const std::string * rawJson);
 		Message(const json::Value& json);
@@ -84,6 +84,7 @@ namespace SleepyDiscord {
 		Snowflake<Channel> channelID;
 		Snowflake<Server> serverID;
 		User author;
+		ServerMember member;
 		std::string content;
 		std::string timestamp;
 		std::string editedTimestamp;
@@ -94,7 +95,6 @@ namespace SleepyDiscord {
 		std::vector<Attachment> attachments;
 		std::vector<Embed> embeds;
 		std::vector<Reaction> reactions;
-		int64_t nonce = 0;	//nullable
 		bool pinned = false;
 		Snowflake<Webhook> webhookID;
 		enum MessageType {
@@ -116,6 +116,7 @@ namespace SleepyDiscord {
 				json::pair                           (&Message::serverID       , "guild_id"        , json::OPTIONAL_FIELD         ),
 				json::pair                           (&Message::author         , "author"          , json::REQUIRIED_FIELD        ),
 				json::pair                           (&Message::content        , "content"         , json::REQUIRIED_FIELD        ),
+				json::pair                           (&Message::member         , "member"          , json::OPTIONAL_FIELD         ),
 				json::pair                           (&Message::timestamp      , "timestamp"       , json::REQUIRIED_FIELD        ),
 				json::pair                           (&Message::editedTimestamp, "edited_timestamp", json::NULLABLE_FIELD         ),
 				json::pair                           (&Message::tts            , "tts"             , json::REQUIRIED_FIELD        ),
@@ -125,10 +126,37 @@ namespace SleepyDiscord {
 				json::pair<json::ContainerTypeHelper>(&Message::attachments    , "attachments"     , json::REQUIRIED_FIELD        ),
 				json::pair<json::ContainerTypeHelper>(&Message::embeds         , "embeds"          , json::REQUIRIED_FIELD        ),
 				json::pair<json::ContainerTypeHelper>(&Message::reactions      , "reactions"       , json::OPTIONAL_FIELD         ),
-				json::pair                           (&Message::nonce          , "nonce"           , json::OPTIONAL_NULLABLE_FIELD),
 				json::pair                           (&Message::pinned         , "pinned"          , json::REQUIRIED_FIELD        ),
 				json::pair                           (&Message::webhookID      , "webhook_id"      , json::OPTIONAL_FIELD         ),
 				json::pair<json::EnumTypeHelper     >(&Message::type           , "type"            , json::REQUIRIED_FIELD        )
+			);
+		JSONStructEnd
+	};
+
+	struct MessageRevisions {
+		MessageRevisions(const json::Value& json) :
+			RevisionsJSON(json), messageID(json["id"]), channelID(json["channel_id"])
+		{}
+		inline void applyChanges(Message& outOfDateMessage) {
+			assert(outOfDateMessage.ID == messageID);
+			json::fromJSON(outOfDateMessage, RevisionsJSON);
+		}
+		Snowflake<Message> messageID;
+		Snowflake<Channel> channelID;
+		const json::Value& RevisionsJSON;
+	};
+
+	struct SendMessageParams : public DiscordObject {
+	public:
+		Snowflake<Channel> channelID;
+		std::string content = {};
+		bool tts = false;
+		Embed embed = Embed::Flag::INVALID_EMBED;
+		JSONStructStart
+			std::make_tuple(
+				json::pair(&SendMessageParams::content, "content", json::REQUIRIED_FIELD),
+				json::pair(&SendMessageParams::tts    , "tts"    , json::OPTIONAL_FIELD ),
+				json::pair(&SendMessageParams::embed  , "embed"  , json::OPTIONAL_FIELD )
 			);
 		JSONStructEnd
 	};

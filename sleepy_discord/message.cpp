@@ -2,9 +2,6 @@
 #include "client.h"
 
 namespace SleepyDiscord {
-	Message::~Message() {
-	}
-
 	Message::Message(const json::Value& json) :
 		Message(json::fromJSON<Message>(json))
 	{}
@@ -21,10 +18,10 @@ namespace SleepyDiscord {
 		return content.length();
 	}
 
-	bool Message::isMentioned(Snowflake<User> ID) {
+	bool Message::isMentioned(Snowflake<User> userID) {
 		std::size_t size = mentions.size();
 		for (std::size_t i = 0; i < size; i++)
-			if (mentions[i].ID == ID) return true;
+			if (mentions[i].ID == userID) return true;
 		return false;
 	}
 
@@ -36,9 +33,9 @@ namespace SleepyDiscord {
 		return client->sendMessage(channelID, content, !embeds.empty() ? embeds[0] : Embed(), tts);
 	}
 
-	Message Message::reply(BaseDiscordClient * client, std::string message, Embed embed, bool tts)
+	Message Message::reply(BaseDiscordClient * client, std::string message, Embed embed, bool _tts)
 	{
-		return client->sendMessage(channelID, message, embed, tts);
+		return client->sendMessage(channelID, message, embed, _tts);
 	}
 
 	Emoji::~Emoji() {

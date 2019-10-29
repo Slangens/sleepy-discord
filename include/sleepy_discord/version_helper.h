@@ -43,12 +43,20 @@ namespace SleepyDiscord {
 	constexpr const char* revision = SLEEPY_DISCORD_VERSION_HASH;
 	constexpr const char* version = SLEEPY_DISCORD_VERSION;
 	constexpr bool isMaster = SLEEPY_DISCORD_VERSION_IS_MASTER;
+	constexpr const char* userAgent = 
+		"DiscordBot (https://github.com/yourWaifu/SleepyDiscord, " \
+		SLEEPY_DISCORD_VERSION_STR(NUM) \
+		") " \
+		SLEEPY_DISCORD_VERSION \
+	;
 	
 	//Features
 	//Remember to list features in both preprocessers and unordered_set
 #define SLEEPY_FEATURE_AVAILABLE_FEATURE_LIST
+#define SLEEPY_FEATURE_LIST_OF_AVAILABLE_FEATURES //fixed grammer
 	std::unordered_set<std::string> availableFeatures{
 		"Available Feature List"
+		"List of Available Features"
 	};
 	inline bool isFeatureAvaiable(std::string& featureName) {
 		return availableFeatures.find(featureName) != availableFeatures.end();

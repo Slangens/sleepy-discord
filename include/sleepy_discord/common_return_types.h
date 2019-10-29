@@ -6,29 +6,33 @@
 
 namespace SleepyDiscord {
 	struct StandardResponse : Response {	//This is here for possiable future use
-		StandardResponse(const Response& response) : Response(response) {}
+		explicit StandardResponse(const Response& response) : Response(response) {}
 	};
 
 	struct BooleanResponse : public StandardResponse {
 	public:
 		using StandardResponse::StandardResponse;
 		using Callback = std::function<bool(const Response& response)>;
+		using Type = bool;
 		BooleanResponse(const Response& response, const Callback callback) :
 			StandardResponse(response), wasSuccessful(callback) { }
 
-		inline operator bool() const {
+		inline operator Type() const {
 			return wasSuccessful(*this) || !error();
 		}
-		
-		bool operator*() const {
-			return operator bool();
+
+		Type operator*() const {
+			return operator Type();
 		}
 
-		inline bool cast() {
-			return operator bool();
+		inline Type cast() {
+			return operator Type();
 		}
 
-		const Callback wasSuccessful = [](const Response& response) { return true; };
+		//this isn't a function so that we can override it during construction.
+		//this isn't a virtual function because then we need lots of child classes
+		//this isn't used in a template because then the user would have to write the right error handling function
+		const Callback wasSuccessful = [](const Response& /*response*/) { return true; };
 	};
 
 	typedef BooleanResponse BoolResponse;
@@ -47,9 +51,11 @@ namespace SleepyDiscord {
 	}
 
 
-	template<class Type>
+	template<class _Type>
 	struct ObjectResponse : public StandardResponse {
 		using StandardResponse::StandardResponse;
+		using Type = _Type;
+
 		operator Type() { //to do use references instead of pointers
 			return error() ? Type() : Type(text);
 		}
@@ -64,18 +70,29 @@ namespace SleepyDiscord {
 	};
 
 
-	struct ArrayResponseWrapper : public json::BaseArrayWrapper, public StandardResponse {
+	struct ArrayResponseWrapper : public StandardResponse {
 		using StandardResponse::StandardResponse;
+		using Type = std::string;
 		inline operator const std::string&() const {
 			return text;
 		}
-		inline json::Array getArray() override {
-			rapidjson::Document arr; //I'm a pirate
+		inline rapidjson::Document getDoc() {
+			rapidjson::Document arr; //ARR, I'm a pirate
 			arr.Parse(text.data(), text.length());
-			return arr.Get<rapidjson::Document::ConstArray>();
+			return arr;
 		}
 	};
 
 	template <class Type>
 	using ArrayResponse = json::ArrayWrapper<Type, ArrayResponseWrapper>;
+
+	struct StringResponse : public StandardResponse {
+		using StandardResponse::StandardResponse;
+		using Type = std::string;
+		inline operator const Type&() const {
+			return text;
+		}
+	};
+
+	using VoidResponse = StringResponse;
 }

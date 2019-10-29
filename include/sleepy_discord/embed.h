@@ -3,6 +3,8 @@
 #include "discord_object_interface.h"
 
 namespace SleepyDiscord {
+	struct SendMessageParams;
+
 	struct EmbedThumbnail : public DiscordObject {
 	public:
 		EmbedThumbnail() = default;
@@ -139,7 +141,7 @@ namespace SleepyDiscord {
 
 		JSONStructStart
 			std::make_tuple(
-				json::pair(&EmbedFooter::text        , "name"          , json::REQUIRIED_FIELD),
+				json::pair(&EmbedFooter::text        , "text"          , json::REQUIRIED_FIELD),
 				json::pair(&EmbedFooter::iconUrl     , "icon_url"      , json::OPTIONAL_FIELD ),
 				json::pair(&EmbedFooter::proxyIconUrl, "proxy_icon_url", json::OPTIONAL_FIELD )
 			);
@@ -151,8 +153,8 @@ namespace SleepyDiscord {
 		EmbedField() = default;
 		EmbedField(const json::Value & json);
 		EmbedField(const nonstd::string_view & json);
-		std::string name;
-		std::string value;
+		std::string name = "";
+		std::string value = "";
 		bool isInline = false;
 
 		bool empty() const {
@@ -161,9 +163,9 @@ namespace SleepyDiscord {
 
 		JSONStructStart
 			std::make_tuple(
-				json::pair(&EmbedField::name    , "name"  , json::REQUIRIED_FIELD),
-				json::pair(&EmbedField::value   , "value" , json::REQUIRIED_FIELD),
-				json::pair(&EmbedField::isInline, "inline", json::OPTIONAL_FIELD )
+				json::pair(&EmbedField::name    , "name"  , json::OPTIONAL_FIELD),
+				json::pair(&EmbedField::value   , "value" , json::OPTIONAL_FIELD),
+				json::pair(&EmbedField::isInline, "inline", json::OPTIONAL_FIELD)
 			);
 		JSONStructEnd
 	};
@@ -215,12 +217,13 @@ namespace SleepyDiscord {
 		JSONStructEnd
 	private:
 		friend BaseDiscordClient;
+		friend SendMessageParams;
 
 		enum class Flag {
 			INVALID_EMBED = 0,
 			VALID_EMBED = 1
 		};
-		const Flag flags = Flag::VALID_EMBED;
+		Flag flags = Flag::VALID_EMBED;
 		Embed(const Flag f) : flags(f) {}
 	};
 }
