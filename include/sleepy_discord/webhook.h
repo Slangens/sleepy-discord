@@ -19,10 +19,14 @@ namespace SleepyDiscord {
 	struct Webhook : public IdentifiableDiscordObject<Webhook> {
 	public:
 		Webhook() = default;
-		//Webhook(const std::string * rawJSON);
 		Webhook(const json::Value & json);
 		Webhook(const nonstd::string_view & rawJSON);
-		//Webhook(const json::Values values);
+
+		enum WebhookType {
+			INCOMING = 1,
+			CHANNEL_FOLLOWER = 2,
+		};
+		WebhookType type = static_cast<WebhookType>(0);
 		Snowflake<Server> serverID;
 		Snowflake<Channel> channelID;
 		User user;
@@ -37,7 +41,7 @@ namespace SleepyDiscord {
 				json::pair(&Webhook::user     , "user"      , json::OPTIONAL_FIELD ),
 				json::pair(&Webhook::name     , "name"      , json::NULLABLE_FIELD ),
 				json::pair(&Webhook::avatar   , "avatar"    , json::NULLABLE_FIELD ),
-				json::pair(&Webhook::token    , "token"     , json::REQUIRIED_FIELD)
+				json::pair(&Webhook::token    , "token"     , json::OPTIONAL_FIELD )
 			);
 		JSONStructEnd
 	};

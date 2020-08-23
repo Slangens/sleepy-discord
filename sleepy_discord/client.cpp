@@ -63,27 +63,39 @@ namespace SleepyDiscord {
 	}
 
 	Response BaseDiscordClient::request(const RequestMethod method, Route path, const std::string jsonParameters,
-		const std::initializer_list<Part>& multipartParameters, RequestCallback callback, RequestMode mode
+		const std::vector<Part>& multipartParameters, RequestCallback callback, const RequestMode mode
 	) {
 		//check if rate limited
 		Response response;
 		const time_t currentTime = getEpochTimeMillisecond();
 		response.birth = currentTime;
 		Route::Bucket bucket = path.bucket(method);
+
+		bool shouldCallCallback = true;
+		const auto handleCallbackCall = [=]() {
+			if (shouldCallCallback && callback)
+				callback(response);
+		};
+		const auto handleExceededRateLimit = [=, &shouldCallCallback](std::time_t timeTilRetry) {
+			onExceededRateLimit(
+				rateLimiter.isGlobalRateLimited, timeTilRetry,
+				{ *this, method, path, jsonParameters, multipartParameters, callback, mode },
+				shouldCallCallback
+			);
+		};
+
 		time_t nextTry = rateLimiter.getLiftTime(bucket, currentTime);
 		if (0 < nextTry) {
-			onExceededRateLimit(
-				rateLimiter.isGlobalRateLimited, nextTry - currentTime,
-				{ *this, method, path, jsonParameters, multipartParameters, callback, mode }
-			);
+			handleExceededRateLimit(nextTry - currentTime);
 			response.statusCode = TOO_MANY_REQUESTS;
 			setError(response.statusCode);
+			handleCallbackCall();
 			return response;
 		}
 		{	//the { is used so that onResponse is called after session is removed to make debugging performance issues easier
 			//request starts here
 			Session session;
-			session.setUrl("https://discordapp.com/api/v6/" + path.url());
+			session.setUrl("https://discord.com/api/v6/" + path.url());
 			std::vector<HeaderPair> header = {
 				{ "Authorization", bot ? "Bot " + getToken() : getToken() },
 				{ "User-Agent", userAgent },
@@ -122,10 +134,7 @@ namespace SleepyDiscord {
 						rateLimiter.limitBucket(bucket, rateLimiter.nextRetry);
 						onDepletedRequestSupply(bucket, retryAfter);
 					}
-					onExceededRateLimit(
-						rateLimiter.isGlobalRateLimited, retryAfter,
-						{ *this, method, path, jsonParameters, multipartParameters, callback, mode }
-					);
+					handleExceededRateLimit(retryAfter);
 				}
 			default:
 				{		//error
@@ -149,6 +158,10 @@ namespace SleepyDiscord {
 					);
 					else if (!response.text.empty())
 						onError(ERROR_NOTE, response.text);
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
+						if (static_cast<int>(mode) & static_cast<int>(ThrowError))
+							throw code;
+#endif
 					}
 				} break;
 			}
@@ -172,8 +185,7 @@ namespace SleepyDiscord {
 				onDepletedRequestSupply(bucket, resetDelta);
 			}
 
-			if (callback)
-				callback(response);
+			handleCallbackCall();
 		}
 		onResponse(response);
 		return response;
@@ -197,9 +209,15 @@ namespace SleepyDiscord {
 	void BaseDiscordClient::onDepletedRequestSupply(const Route::Bucket&, time_t) {
 	}
 
-	void BaseDiscordClient::onExceededRateLimit(bool, std::time_t timeTilRetry, Request request) {
-		if (request.mode == Async)
+	void BaseDiscordClient::onExceededRateLimit(bool, std::time_t timeTilRetry, Request request, bool& continueRequest) {
+		bool shouldScheduleNewRequest =
+			static_cast<int>(request.mode) & static_cast<int>(AsyncQueue);
+		continueRequest = !shouldScheduleNewRequest;
+		if (shouldScheduleNewRequest) {
+			//since we are scheduling the request, I think we should make it async
+			request.mode = Async;
 			schedule(request, timeTilRetry);
+		}
 	}
 
 	void BaseDiscordClient::updateStatus(std::string gameName, uint64_t idleSince, Status status, bool afk) {
@@ -376,9 +394,11 @@ namespace SleepyDiscord {
 		if (reconnectTimer.isValid())
 			reconnectTimer.stop();
 		reconnectTimer = schedule([this]() {
-			connect(theGateway, this, connection);
+			//if not a successful reconnection
+			if (consecutiveReconnectsCount != 0)
+				connect(theGateway, this, connection);
 		}, getRetryDelay());
-		++consecutiveReconnectsCount;
+		consecutiveReconnectsCount += 1;
 
 		for (VoiceConnection& voiceConnection : voiceConnections) {
 			disconnect(1001, "", voiceConnection.connection);
@@ -652,6 +672,8 @@ namespace SleepyDiscord {
 		case AUTHENTICATION_FAILED:
 		case INVALID_SHARD:
 		case SHARDING_REQUIRED:
+		case INVALID_INTENTS:
+		case DISALLOWED_INTENTS:
 			return quit(false, true);
 			break;
 		}
@@ -798,9 +820,6 @@ namespace SleepyDiscord {
 	Route::Route(const std::string route, const std::initializer_list<std::string>& _values)
 		: path(route), values(_values)
 	{
-		constexpr char channelIDIdentifier[] = "channel.id";
-		constexpr char serverIDIdentifier[] = "guild.id";
-
 		size_t targetSize = path.length();
 		for (std::string replacement : values)
 			targetSize += replacement.length();
@@ -816,10 +835,10 @@ namespace SleepyDiscord {
 			//the +1 and -1 removes the { and }
 			const std::string identifier = path.substr(start + 1, end - start - 1);
 
-			if (identifier == channelIDIdentifier)
-				channelID = replacement;
-			else if (identifier == serverIDIdentifier)
-				serverID = replacement;
+			auto foundParam = majorParameters.find(identifier);
+			if (foundParam != majorParameters.end()) {
+				foundParam->second = replacement;
+			}
 
 			_url += path.substr(offset, start - offset);
 			_url += replacement;
@@ -834,11 +853,16 @@ namespace SleepyDiscord {
 	const std::string Route::bucket(RequestMethod method) {
 		std::string target;
 		std::string methodString = std::to_string(method);
-		target.reserve(methodString.length() + channelID.string().length()
-			+ serverID.string().length() + path.length());
+		size_t targetLength = methodString.length();
+		for (auto param : majorParameters) {
+			targetLength += param.second.length();
+		}
+		targetLength = path.length();
+		target.reserve(targetLength);
 		target += methodString;
-		target += channelID;
-		target += serverID;
+		for (auto param : majorParameters) {
+			target += param.second;
+		}
 		target += path;
 		return target;
 	}

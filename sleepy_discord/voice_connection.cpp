@@ -165,7 +165,7 @@ namespace SleepyDiscord {
 			const json::Value& secretKeyJSON = d["secret_key"];
 			json::Array secretKeyJSONArray = secretKeyJSON.GetArray();
 			const std::size_t secretKeyJSONArraySize = secretKeyJSONArray.Size();
-			for (std::size_t i = 0; i < SECRET_KEY_SIZE && i < secretKeyJSONArraySize; ++i) {
+			for (std::size_t i = 0; i < secretKey.max_size() && i < secretKeyJSONArraySize; ++i) {
 					secretKey[i] = secretKeyJSONArray[i].GetUint() & 0xFF;
 			}
 			}
@@ -194,8 +194,8 @@ namespace SleepyDiscord {
 		state = static_cast<State>(state & ~State::CONNECTED);
 
 		switch (code) {
-		case 1000                : //normal closure
-		case DISCONNECTED        : //deleted voice channel
+		case 1000: //normal closure
+		case 1001:
 		case VOICE_SERVER_CRASHED:
 			if (oldState & State::CONNECTED)
 				disconnect();
@@ -415,7 +415,7 @@ namespace SleepyDiscord {
 		std::memcpy(audioDataPacket.data(), header, sizeof header);
 
 		crypto_secretbox_easy(audioDataPacket.data() + sizeof header,
-			encodedAudioData, length, nonce, secretKey);
+			encodedAudioData, length, nonce, secretKey.data());
 
 		UDP.send(audioDataPacket.data(), audioDataPacket.size());
 		samplesSentLastTime = frameSize << 1;
@@ -465,7 +465,7 @@ namespace SleepyDiscord {
 		bool isForged = crypto_secretbox_open_easy(
 			decryptedData.data(),
 			data.data() + sizeof nonce,
-			decryptedDataSize, nonce, secretKey
+			decryptedDataSize, nonce, secretKey.data()
 		) != 0;
 		if (isForged)
 			return;

@@ -11,6 +11,7 @@ if (NOT ONLY_SLEEPY_DISCORD)
 	option(USE_WEBSOCKETPP               "Use websocketpp websockets library"                                 ON )
 	option(USE_UWEBSOCKETS               "Use uWebsockets websockets library"                                 OFF)
 	option(USE_ASIO                      "Use ASIO network and I/O library (Used for UDP)"                    OFF)
+	option(USE_BOOST_ASIO                "Same as USE_ASIO but for boost library"                             OFF)
 	option(USE_LIBOPUS                   "Use Opus audio codec library"                                       OFF)
 	option(USE_LIBSODIUM                 "Use libsodium cryptography library"                                 OFF)
 endif()
@@ -53,7 +54,7 @@ if(AUTO_DOWNLOAD_LIBRARY)
 		download_project(
 			PROJ           cpr
 			GIT_REPOSITORY https://github.com/whoshuu/cpr.git
-			GIT_TAG        master
+			GIT_TAG        b748095
 			SOURCE_DIR     ${PROJECT_SOURCE_DIR}/deps/cpr
 			UPDATE_DISCONNECTED 1
 		)
@@ -97,8 +98,8 @@ if(AUTO_DOWNLOAD_LIBRARY)
 		#needs libtool
 		download_project(
 			PROJ           opus
-			GIT_REPOSITORY https://git.xiph.org/opus.git
-			GIT_TAG        master
+			GIT_REPOSITORY https://gitlab.xiph.org/xiph/opus.git
+			GIT_TAG        7628d844
 			SOURCE_DIR     ${PROJECT_SOURCE_DIR}/deps/opus
 			UPDATE_DISCONNECTED 1
 		)

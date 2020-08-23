@@ -1,5 +1,15 @@
 #pragma once
-#include <cpr/cpr.h>
+
+#if defined(SLEEPY_DISCORD_CMAKE)
+	#if defined(EXISTENT_CPR)
+		#include <cpr/cpr.h>
+	#else
+		#define NONEXISTENT_CPR
+	#endif
+#else
+	#include <cpr/cpr.h>
+#endif
+
 #ifndef NONEXISTENT_CPR
 #include "http.h"
 
@@ -13,7 +23,7 @@ namespace SleepyDiscord {
 			session.SetBody(cpr::Body{ *jsonParameters });
 		}
 		void setHeader(const std::vector<HeaderPair>& header);
-		void setMultipart(const std::initializer_list<Part>& parts);
+		void setMultipart(const std::vector<Part>& parts);
 		void setResponseCallback(const ResponseCallback& callback) {
 			responseCallback = callback;
 		}

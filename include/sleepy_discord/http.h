@@ -6,6 +6,8 @@
 #include <functional>
 #include "error.h"
 
+//important note, all requests on sync mode throw on an http error
+
 namespace SleepyDiscord {
 	//http variables and functions
 	//request functions
@@ -19,10 +21,15 @@ namespace SleepyDiscord {
 
 	class BaseDiscordClient;
 
+	//copied from cpr
+	struct caseInsensitiveCompare {
+		bool operator()(const std::string& a, const std::string& b) const noexcept;
+	};
+
 	struct Response {
 		std::string text;
 		int32_t statusCode = 0;
-		std::map<std::string, std::string> header;
+		std::map<std::string, std::string, caseInsensitiveCompare> header;
 		time_t birth = 0;
 		inline bool error() const {
 			return BAD_REQUEST <= statusCode;
@@ -60,12 +67,12 @@ namespace SleepyDiscord {
 		virtual void setUrl(const std::string& url) = 0;
 		virtual void setBody(const std::string* jsonParameters) = 0;
 		virtual void setHeader(const std::vector<HeaderPair>& header) = 0;
-		virtual void setMultipart(const std::initializer_list<Part>& parts) = 0;
+		virtual void setMultipart(const std::vector<Part>& parts) = 0;
 		virtual void setResponseCallback(const ResponseCallback& callback) = 0;
 		virtual Response request(RequestMethod method) = 0;
 	protected:
 		//Use this to convert RequestMethod into a string
 		const char* getMethodName(const RequestMethod& method);
-		
+
 	};
 };
