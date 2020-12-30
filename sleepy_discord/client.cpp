@@ -72,7 +72,7 @@ namespace SleepyDiscord {
 		Route::Bucket bucket = path.bucket(method);
 
 		bool shouldCallCallback = true;
-		const auto handleCallbackCall = [=]() {
+		const auto handleCallbackCall = [&]() {
 			if (shouldCallCallback && callback)
 				callback(response);
 		};
@@ -88,7 +88,10 @@ namespace SleepyDiscord {
 		if (0 < nextTry) {
 			handleExceededRateLimit(nextTry - currentTime);
 			response.statusCode = TOO_MANY_REQUESTS;
-			setError(response.statusCode);
+			onError(TOO_MANY_REQUESTS,
+				"Too many request going to " +
+					std::string(getMethodName(method)) + " " +
+					path.url());
 			handleCallbackCall();
 			return response;
 		}
@@ -155,7 +158,7 @@ namespace SleepyDiscord {
 						onError(
 							static_cast<ErrorCode>(errorCode->value.GetInt()),
 							{ errorMessage != document.MemberEnd() ? errorMessage->value.GetString() : "" }
-					);
+						);
 					else if (!response.text.empty())
 						onError(ERROR_NOTE, response.text);
 #if defined(__cpp_exceptions) || defined(__EXCEPTIONS)
@@ -239,6 +242,11 @@ namespace SleepyDiscord {
 		}));
 	}
 
+	void BaseDiscordClient::requestServerMembers(ServerMembersRequest request) {
+		auto data = json::toJSON(request);
+		sendL(json::stringify(data));
+	}
+
 	void BaseDiscordClient::waitTilReady() {
 		while (!ready) sleep(1000);
 	}
@@ -250,10 +258,13 @@ namespace SleepyDiscord {
 
 	void BaseDiscordClient::getTheGateway() {
 #ifdef SLEEPY_USE_HARD_CODED_GATEWAY
-		theGateway = "wss://gateway.discord.gg/?v=6";	//This is needed for when session is disabled
+	#ifndef SLEEPY_HARD_CODED_GATEWAY
+		#define SLEEPY_HARD_CODED_GATEWAY "wss://gateway.discord.gg/?v=6"
+	#endif
+		theGateway = SLEEPY_HARD_CODED_GATEWAY;	//This is needed for when session is disabled
 #else
 		Session session;
-		session.setUrl("https://discordapp.com/api/gateway");
+		session.setUrl("https://discord.com/api/gateway");
 		Response a = session.request(Get);	//todo change this back to a post
 		if (!a.text.length()) {	//error check
 			quit(false, true);
@@ -385,10 +396,14 @@ namespace SleepyDiscord {
 	}
 
 	void BaseDiscordClient::reconnect(const unsigned int status) {
-		if (status != 1000) {         //check for a deliberate reconnect
-			heartbeatInterval = 0;    //stop heartbeating
-			wasHeartbeatAcked = true; //stops the library from spamming discord
-		}
+		//before disconnecting, heartbeats need to stop or it'll crash
+		//and if it doesn't, it'll cause another reconnect
+		if (heart.isValid()) heart.stop();
+		//reset some heartbeat values, done so we don't spam discord
+		wasHeartbeatAcked = true;
+		lastHeartbeat = 0;
+		heartbeatInterval = 0;
+
 		disconnectWebsocket(status);
 		if (consecutiveReconnectsCount == 10) getTheGateway();
 		if (reconnectTimer.isValid())
@@ -401,7 +416,7 @@ namespace SleepyDiscord {
 		consecutiveReconnectsCount += 1;
 
 		for (VoiceConnection& voiceConnection : voiceConnections) {
-			disconnect(1001, "", voiceConnection.connection);
+			disconnect(4900, "", voiceConnection.connection);
 	}
 	}
 
@@ -445,7 +460,6 @@ namespace SleepyDiscord {
 		switch (op) {
 		case DISPATCH:
 			lastSReceived = document["s"].GetInt();
-			consecutiveReconnectsCount = 0; //Successfully connected
 			switch (hash(json::toStdString(t).c_str())) {
 			case hash("READY"                      ): {
 				Ready readyData = d;
@@ -454,8 +468,12 @@ namespace SleepyDiscord {
 				userID = readyData.user;
 				onReady(readyData);
 				ready = true;
+				consecutiveReconnectsCount = 0; //Successfully connected
 				} break;
-			case hash("RESUMED"                    ): onResumed            (); break;
+			case hash("RESUMED"                    ): 
+				consecutiveReconnectsCount = 0; //Successfully connected
+				onResumed();
+				break;
 			case hash("GUILD_CREATE"               ): {
 				Server server(d);
 				if (serverCache)
@@ -509,7 +527,7 @@ namespace SleepyDiscord {
 				);
 				onEditMember(serverID, user, roles, nick);
 				} break;
-			case hash("GUILD_MEMBERS_CHUNK"        ): onMemberChunk       (d["guild_id"], json::toArray<ServerMember>(d["members"])); break;
+			case hash("GUILD_MEMBERS_CHUNK"        ): onMemberChunk       (d); break;
 			case hash("GUILD_ROLE_CREATE"          ): {
 				Snowflake<Server> serverID = d["guild_id"];
 				Role role = d["role"];
@@ -677,7 +695,7 @@ namespace SleepyDiscord {
 			return quit(false, true);
 			break;
 		}
-		reconnect(1001);
+		reconnect();
 	}
 
 	void BaseDiscordClient::heartbeat() {
@@ -692,27 +710,90 @@ namespace SleepyDiscord {
 		}
 
 		if (!wasHeartbeatAcked) {
-			reconnect(1001);
-		} else {
-			sendHeartbeat();
+			//dead connection
+			reconnect();
+			return; //don't heartbeat
 		}
 
+		sendHeartbeat();
 		lastHeartbeat = currentTime;
 
 		heart = schedule(&BaseDiscordClient::heartbeat, heartbeatInterval);
 	}
 
-	void BaseDiscordClient::sendHeartbeat() {
-		std::string str = std::to_string(lastSReceived);
-		std::string heartbeat;
-		//The number 18 comes from 1 plus the length of {\"op\":1,\"d\":}
-		heartbeat.reserve(18 + str.length());
-		heartbeat += 
-			"{"
-				"\"op\":1,"
-				"\"d\":"; heartbeat += str; heartbeat +=
+	//The number 10 comes from the largest unsigned int being 10 digits long
+	using DBuffer = std::array<char, 10>;
+	//The number 18 comes from 1 plus the length of {\"op\":1,\"d\":}
+	using HeartbeatBuffer = std::array<char, 18 + std::tuple_size<DBuffer>::value>;
+
+	struct Heartbeat {
+		HeartbeatBuffer buffer;
+		std::size_t length;
+	};
+
+	//please only call during compile time
+	constexpr std::size_t length(const char* str) {
+		return *str ? 1 + length(str + 1) : 0;
+	}
+
+	//no reason for this to be so optimized but I just felt like it one day
+#ifdef __cpp_lib_array_constexpr
+	constexpr
+#endif
+	Heartbeat generateHeatbeat(const unsigned int lastSReceived) {
+		DBuffer dBuffer {};
+		//can't find a number to std array so a custom one is made here
+		auto reverseNext = dBuffer.end();
+		auto trunc = lastSReceived;
+		do {
+			reverseNext -= 1;
+			*reverseNext = '0' + (trunc % 10);
+			trunc /= 10;
+		} while (trunc != 0);
+		
+		const nonstd::string_view d{&(*reverseNext),
+			std::size_t(dBuffer.end() - reverseNext)};
+
+		constexpr auto startBuffer =
+		"{"
+			"\"op\":1,"
+			"\"d\":";
+		const
+		constexpr auto endBuffer = 
 			"}";
-		sendL(heartbeat);
+		constexpr auto startLength = length(startBuffer);
+		//this works because char is one btye
+		constexpr auto endLength = length(endBuffer);
+		constexpr auto start = nonstd::string_view{startBuffer, startLength};
+		constexpr auto end = nonstd::string_view{endBuffer, endLength};
+
+
+		const std::array<nonstd::string_view, 3> toConcat {{
+			start, d, end
+		}};
+
+		Heartbeat heartbeat = {};
+		HeartbeatBuffer& heartbeatBuffer = heartbeat.buffer;
+		std::size_t& index = heartbeat.length;
+		for (const auto& source : toConcat)
+		{
+			auto dest = heartbeatBuffer.begin() + index;
+
+			//memcpy not avaiable at compile time
+			for (std::size_t index = 0; index < source.length(); index += 1) {
+				dest[index] = source[index];
+			}
+			index += source.length();
+		}
+
+		return heartbeat;
+	}
+
+	void BaseDiscordClient::sendHeartbeat() {
+		const auto heartbeat = generateHeatbeat(lastSReceived);
+		const nonstd::string_view message(heartbeat.buffer.data(), heartbeat.length);
+		//to do switch sendL to string_view
+		sendL(std::string{message.data(), message.length()});
 		wasHeartbeatAcked = false;
 		onHeartbeat();
 	}

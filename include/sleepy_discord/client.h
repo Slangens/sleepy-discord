@@ -152,7 +152,7 @@ namespace SleepyDiscord {
 
 		template<class ParmType>
 		void requestAsync(const RequestMethod method, Route path, std::function<void(ParmType)> callback, const std::string jsonParameters = "",
-			const std::initializer_list<Part>& multipartParameters = {}, const RequestMode mode = Async) {
+			const std::vector<Part>& multipartParameters = {}, const RequestMode mode = Async) {
 			postTask(static_cast<PostableTask>(
 				Request{ *this, method, path, jsonParameters, multipartParameters, callback ? RequestCallback([callback](Response r) {
 					callback(static_cast<ParmType>(r));
@@ -162,7 +162,7 @@ namespace SleepyDiscord {
 
 		template<class ParmType>
 		Response requestSync(const RequestMethod method, Route path, std::function<void(ParmType)> callback, const std::string jsonParameters = "",
-			const std::initializer_list<Part>& multipartParameters = {}, const RequestMode mode = Sync) {
+			const std::vector<Part>& multipartParameters = {}, const RequestMode mode = Sync) {
 			return request(method, path, jsonParameters, multipartParameters, callback ? RequestCallback([callback](Response r) {
 				callback(static_cast<ParmType>(r));
 			}) : RequestCallback(nullptr), mode );
@@ -248,12 +248,12 @@ namespace SleepyDiscord {
 		//maybe move this to message.h
 		ObjectResponse<Message     > sendMessage             (Snowflake<Channel> channelID, std::string message, Embed embed = Embed::Flag::INVALID_EMBED, TTS tts = TTS::Default, RequestSettings<ObjectResponse<Message>> settings = {});
 		ObjectResponse<Message     > sendMessage             (SendMessageParams params                                                                                     , RequestSettings<ObjectResponse<Message>> settings = {});
-		ObjectResponse<Message     > uploadFile              (Snowflake<Channel> channelID, std::string fileLocation, std::string message                                  , RequestSettings<ObjectResponse<Message>> settings = {});
+		ObjectResponse<Message     > uploadFile              (Snowflake<Channel> channelID, std::string fileLocation, std::string message, Embed embed = Embed::Flag::INVALID_EMBED, RequestSettings<ObjectResponse<Message>> settings = {});
 		BoolResponse                 addReaction             (Snowflake<Channel> channelID, Snowflake<Message> messageID, std::string emoji                                , RequestSettings<BoolResponse           > settings = {});
 		BoolResponse                 removeReaction          (Snowflake<Channel> channelID, Snowflake<Message> messageID, std::string emoji, Snowflake<User> userID = "@me");
 		ArrayResponse <Reaction    > getReactions            (Snowflake<Channel> channelID, Snowflake<Message> messageID, std::string emoji                                , RequestSettings<ArrayResponse<Reaction>> settings = {});
 		StandardResponse             removeAllReactions      (Snowflake<Channel> channelID, Snowflake<Message> messageID                                                   , RequestSettings<StandardResponse       > settings = {});
-		ObjectResponse<Message     > editMessage             (Snowflake<Channel> channelID, Snowflake<Message> messageID, std::string newMessage                           , RequestSettings<ObjectResponse<Message>> settings = {});
+		ObjectResponse<Message     > editMessage             (Snowflake<Channel> channelID, Snowflake<Message> messageID, std::string newMessage, Embed embed = Embed::Flag::INVALID_EMBED, RequestSettings<ObjectResponse<Message>> settings = {});
 		BoolResponse                 deleteMessage           (Snowflake<Channel> channelID, Snowflake<Message> messageID                                                   , RequestSettings<BoolResponse           > settings = {});
 		BoolResponse                 bulkDeleteMessages      (Snowflake<Channel> channelID, std::vector<Snowflake<Message>> messageIDs                                     , RequestSettings<BoolResponse           > settings = {});
 		/*allow is a bitwise value of all allowed permissions
@@ -352,6 +352,7 @@ namespace SleepyDiscord {
 
 		//websocket functions
 		void updateStatus(std::string gameName = "", uint64_t idleSince = 0, Status status = online, bool afk = false);
+		void requestServerMembers(ServerMembersRequest request);
 
 		void waitTilReady();  ////Deprecated, uses sleep. No replacment for now
 		const bool isReady() { return ready; }
@@ -529,7 +530,7 @@ namespace SleepyDiscord {
 		virtual void onDeleteRole        (Snowflake<Server> serverID, Snowflake<Role> roleID);
 		virtual void onEditRole          (Snowflake<Server> serverID, Role role);
 		virtual void onEditEmojis        (Snowflake<Server> serverID, std::vector<Emoji> emojis);
-		virtual void onMemberChunk       (Snowflake<Server> serverID, std::vector<ServerMember> members);
+		virtual void onMemberChunk       (ServerMembersChunk memberChunk);
 		virtual void onDeleteChannel     (Channel            channel    );
 		virtual void onEditChannel       (Channel            channel    );
 		virtual void onPinMessage        (Snowflake<Channel> channelID, std::string lastPinTimestamp);
@@ -585,7 +586,7 @@ namespace SleepyDiscord {
 		void handleFailToConnect() override { reconnect(); }
 		virtual void send(std::string /*message*/, WebsocketConnection& /*connection*/) {}
 		virtual void disconnect(unsigned int /*code*/, const std::string /*reason*/, WebsocketConnection& /*connection*/) {}
-		void reconnect(const unsigned int status = 1000);
+		void reconnect(const unsigned int status = 4900);
 		virtual void stopClient() {}
 		//the next 3 functions are part of BaseDiscordClient because VoiceConnection is a private nested class
 		inline void initialize(GenericMessageReceiver*& messageProcessor) const {

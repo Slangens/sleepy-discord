@@ -30,7 +30,11 @@ if(ENABLE_VOICE)
 endif()
 
 if(USE_WEBSOCKETPP OR USE_UWEBSOCKETS)
-	set(USE_ASIO ON)
+	if(Boost_FOUND) #checks if already defined
+		set(USE_BOOST_ASIO ON)
+	else()
+		set(USE_ASIO ON)
+	endif()
 endif()
 
 find_package(Git)
@@ -54,7 +58,7 @@ if(AUTO_DOWNLOAD_LIBRARY)
 		download_project(
 			PROJ           cpr
 			GIT_REPOSITORY https://github.com/whoshuu/cpr.git
-			GIT_TAG        b748095
+			GIT_TAG        e627e47
 			SOURCE_DIR     ${PROJECT_SOURCE_DIR}/deps/cpr
 			UPDATE_DISCONNECTED 1
 		)
@@ -66,7 +70,7 @@ if(AUTO_DOWNLOAD_LIBRARY)
 		download_project(
 			PROJ           asio
 			GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
-			GIT_TAG        22afb86
+			GIT_TAG        master
 			SOURCE_DIR     ${PROJECT_SOURCE_DIR}/deps/asio
 			UPDATE_DISCONNECTED 1
 		)
